@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shoe Generator - Physics Sync</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #1a1a2e;
+            color: white;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container { max-width: 1000px; width: 100%; }
+        canvas {
+            background: #f8f9fa;
+            border-radius: 15px;
+            width: 100%;
+            height: 400px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .stat-card { background: #0f3460; padding: 10px; border-radius: 8px; text-align: center; }
+        .stat-value { font-size: 1.5rem; font-weight: bold; color: #4ecc71; }
+        button {
+            padding: 10px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            background: #e94560;
+            color: white;
+        }
+        input { width: 100%; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2 style="text-align:center; margin-bottom:15px;">ðŸ‘Ÿ Shoe Gen OS v1.0</h2>
+        <canvas id="circuit-canvas"></canvas>
+
+        <div class="controls">
+            <div>
+                <label>Motor Speed: <span id="rpm-val">1500</span> RPM</label>
+                <input type="range" id="motor-speed" min="0" max="3000" value="1500">
+                <div style="margin-top:15px; display:flex; gap:10px;">
+                    <button id="start-btn" style="background:#4ecc71">START</button>
+                    <button id="stop-btn">STOP</button>
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="stat-card">
+                    <div>Output</div>
+                    <div class="stat-value"><span id="out-v">0</span>V</div>
+                </div>
+                <div class="stat-card">
+                    <div>Storage</div>
+                    <div class="stat-value"><span id="storage-val">0</span>%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('circuit-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // State Management
+    let state = {
+        isRunning: false,
+        rpm: 1500,
+        energyBuffer: 0, // Joules
+        maxBuffer: 500,
+        rectV: 0,
+        outV: 0,
+        particles: []
+    };
+
+    // UI Elements
+    const rpmInput = document.getElementById('motor-speed');
+    const rpmDisp = document.getElementById('rpm-val');
+
+    // Component Positions
+    const comps = {
+        motor: { x: 50, y: 150, name: "BLDC Gen", color: "#3498db" },
+        rect:  { x: 250, y: 150, name: "Rectifier", color: "#9b59b6" },
+        boost: { x: 450, y: 150, name: "Buck-Boost", color: "#e74c3c" },
+        usb:   { x: 650, y: 150, name: "USB 5V", color: "#27ae60" }
+    };
+
+    function init() {
+        canvas.width = 800;
+        canvas.height = 400;
+        animate();
+    }
+
+    // Physics Engine Logic
+    function updatePhysics() {
+        if (!state.isRunning) {
+            state.outV = 0;
+            return;
+        }
+
+        // 1. Faraday's Law: RPM to AC to DC
+        let rawAC = state.rpm * 0.01; 
+        state.rectV = rawAC * 0.9; // Loss through Bridge Rectifier
+
+        // 2. Charging the Buffer (Capacitor Logic)
+        if (state.rectV > 0.5) {
+            state.energyBuffer = Math.min(state.maxBuffer, state.energyBuffer + (state.rectV * 0.1));
+        }
+
+        // 3. Buck-Boost Logic
+        // We need at least 2V or Buffer > 20% to stabilize 5V
+        if (state.rectV > 2 || state.energyBuffer > 100) {
+            state.outV = 5.0;
+            state.energyBuffer -= 0.05; // Load drain
+        } else {
+            state.outV = 0;
+        }
+
+        // Update UI
+        document.getElementById('out-v').innerText = state.outV.toFixed(1);
+        document.getElementById('storage-val').innerText = ((state.energyBuffer / state.maxBuffer) * 100).toFixed(0);
+        
+        // Spawn electron particles based on flow
+        if (state.rectV > 1 && Math.random() > 0.8) {
+            state.particles.push({x: 100, y: 200, targetIdx: 0});
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw Wires
+        ctx.strokeStyle = "#ccc";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(100, 200); ctx.lineTo(700, 200);
+        ctx.stroke();
+
+        // Draw Components
+        Object.keys(comps).forEach(key => {
+            let c = comps[key];
+            ctx.fillStyle = c.color;
+            ctx.fillRect(c.x, c.y, 100, 80);
+            ctx.fillStyle = "#000";
+            ctx.font = "bold 12px Arial";
+            ctx.fillText(c.name, c.x + 10, c.y + 45);
+        });
+
+        // Draw Particles (Electrons)
+        ctx.fillStyle = "#f1c40f";
+        state.particles.forEach((p, i) => {
+            p.x += 5;
+            ctx.beginPath();
+            ctx.arc(p.x, 200, 5, 0, Math.PI*2);
+            ctx.fill();
+            if (p.x > 700) state.particles.splice(i, 1);
+        });
+    }
+
+    function animate() {
+        updatePhysics();
+        draw();
+        requestAnimationFrame(animate);
+    }
+
+    // Listeners
+    rpmInput.oninput = (e) => {
+        state.rpm = e.target.value;
+        rpmDisp.innerText = state.rpm;
+    };
+    document.getElementById('start-btn').onclick = () => state.isRunning = true;
+    document.getElementById('stop-btn').onclick = () => state.isRunning = false;
+
+    init();
+</script>
+</body>
