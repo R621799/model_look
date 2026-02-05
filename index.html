@@ -20,7 +20,7 @@
             background: #f8f9fa;
             border-radius: 15px;
             width: 100%;
-            height: 400px;
+            height: 500px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         .controls {
@@ -32,8 +32,22 @@
             grid-template-columns: 1fr 1fr;
             gap: 20px;
         }
-        .stat-card { background: #0f3460; padding: 10px; border-radius: 8px; text-align: center; }
+        .stat-card { 
+            background: #0f3460; 
+            padding: 10px; 
+            border-radius: 8px; 
+            text-align: center;
+            position: relative;
+        }
         .stat-value { font-size: 1.5rem; font-weight: bold; color: #4ecc71; }
+        .stat-card.full { 
+            background: #e74c3c; 
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(231, 76, 60, 0.5); }
+            50% { box-shadow: 0 0 25px rgba(231, 76, 60, 1); }
+        }
         button {
             padding: 10px;
             cursor: pointer;
@@ -42,14 +56,57 @@
             font-weight: bold;
             background: #e94560;
             color: white;
+            transition: all 0.3s;
         }
+        button:hover { transform: translateY(-2px); }
         input { width: 100%; }
+        
+        .status-indicator {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: bold;
+            background: #0f3460;
+            transition: all 0.3s;
+        }
+        .status-indicator.transmitting {
+            background: #f39c12;
+            animation: blink 0.5s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .signal-icon {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .signal-bar {
+            display: inline-block;
+            width: 3px;
+            height: 10px;
+            background: #f39c12;
+            margin: 0 1px;
+            animation: signal-wave 1s infinite;
+        }
+        .signal-bar:nth-child(1) { animation-delay: 0s; height: 8px; }
+        .signal-bar:nth-child(2) { animation-delay: 0.1s; height: 12px; }
+        .signal-bar:nth-child(3) { animation-delay: 0.2s; height: 16px; }
+        .signal-bar:nth-child(4) { animation-delay: 0.3s; height: 12px; }
+        .signal-bar:nth-child(5) { animation-delay: 0.4s; height: 8px; }
+        
+        @keyframes signal-wave {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
 
     <div class="container">
-        <h2 style="text-align:center; margin-bottom:15px;">ðŸ‘Ÿ Shoe Gen OS v1.0</h2>
+        <h2 style="text-align:center; margin-bottom:15px;">👟 Shoe Gen OS v1.0</h2>
         <canvas id="circuit-canvas"></canvas>
 
         <div class="controls">
@@ -59,14 +116,26 @@
                 <div style="margin-top:15px; display:flex; gap:10px;">
                     <button id="start-btn" style="background:#4ecc71">START</button>
                     <button id="stop-btn">STOP</button>
+                    <button id="reset-btn" style="background:#f39c12">RESET STORAGE</button>
+                </div>
+                
+                <div class="status-indicator" id="status-indicator">
+                    <span id="status-text">⚫ IDLE</span>
+                    <span class="signal-icon" id="signal-icon" style="display:none;">
+                        <span class="signal-bar"></span>
+                        <span class="signal-bar"></span>
+                        <span class="signal-bar"></span>
+                        <span class="signal-bar"></span>
+                        <span class="signal-bar"></span>
+                    </span>
                 </div>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                <div class="stat-card">
+                <div class="stat-card" id="output-card">
                     <div>Output</div>
                     <div class="stat-value"><span id="out-v">0</span>V</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" id="storage-card">
                     <div>Storage</div>
                     <div class="stat-value"><span id="storage-val">0</span>%</div>
                 </div>
@@ -82,28 +151,40 @@
     let state = {
         isRunning: false,
         rpm: 1500,
-        energyBuffer: 0, // Joules
+        energyBuffer: 0,
         maxBuffer: 500,
         rectV: 0,
         outV: 0,
-        particles: []
+        particles: [],
+        isFull: false,
+        isTransmitting: false,
+        signalWaves: [],
+        icParticles: [] // Particles flowing to IC when full
     };
 
     // UI Elements
     const rpmInput = document.getElementById('motor-speed');
     const rpmDisp = document.getElementById('rpm-val');
+    const statusIndicator = document.getElementById('status-indicator');
+    const statusText = document.getElementById('status-text');
+    const signalIcon = document.getElementById('signal-icon');
+    const storageCard = document.getElementById('storage-card');
 
     // Component Positions
     const comps = {
-        motor: { x: 50, y: 150, name: "BLDC Gen", color: "#3498db" },
-        rect:  { x: 250, y: 150, name: "Rectifier", color: "#9b59b6" },
-        boost: { x: 450, y: 150, name: "Buck-Boost", color: "#e74c3c" },
-        usb:   { x: 650, y: 150, name: "USB 5V", color: "#27ae60" }
+        motor: { x: 50, y: 250, name: "BLDC Gen", color: "#3498db" },
+        rect:  { x: 200, y: 250, name: "Rectifier", color: "#9b59b6" },
+        boost: { x: 350, y: 250, name: "Buck-Boost", color: "#e74c3c" },
+        ic:    { x: 350, y: 100, name: "TX IC", color: "#f39c12" }, // Signal IC above buck-boost
+        usb:   { x: 550, y: 250, name: "USB 5V", color: "#27ae60" }
     };
+
+    // Transmitter antenna position (on IC)
+    const transmitter = { x: 400, y: 80 };
 
     function init() {
         canvas.width = 800;
-        canvas.height = 400;
+        canvas.height = 500;
         animate();
     }
 
@@ -111,66 +192,260 @@
     function updatePhysics() {
         if (!state.isRunning) {
             state.outV = 0;
+            updateStatus();
             return;
         }
 
         // 1. Faraday's Law: RPM to AC to DC
         let rawAC = state.rpm * 0.01; 
-        state.rectV = rawAC * 0.9; // Loss through Bridge Rectifier
+        state.rectV = rawAC * 0.9;
 
-        // 2. Charging the Buffer (Capacitor Logic)
-        if (state.rectV > 0.5) {
+        // 2. Charging the Buffer
+        if (!state.isFull && state.rectV > 0.5) {
             state.energyBuffer = Math.min(state.maxBuffer, state.energyBuffer + (state.rectV * 0.1));
         }
 
-        // 3. Buck-Boost Logic
-        // We need at least 2V or Buffer > 20% to stabilize 5V
-        if (state.rectV > 2 || state.energyBuffer > 100) {
-            state.outV = 5.0;
-            state.energyBuffer -= 0.05; // Load drain
-        } else {
+        // 3. Check if storage is full
+        if (state.energyBuffer >= state.maxBuffer) {
+            state.isFull = true;
+            state.isTransmitting = true;
+            // When full, current redirects to IC instead of USB
             state.outV = 0;
+        } else {
+            state.isFull = false;
+            state.isTransmitting = false;
+            
+            // Normal operation: Buck-Boost to USB
+            if (state.rectV > 2 || state.energyBuffer > 100) {
+                state.outV = 5.0;
+                state.energyBuffer -= 0.05;
+            } else {
+                state.outV = 0;
+            }
         }
 
         // Update UI
         document.getElementById('out-v').innerText = state.outV.toFixed(1);
         document.getElementById('storage-val').innerText = ((state.energyBuffer / state.maxBuffer) * 100).toFixed(0);
+        updateStatus();
         
-        // Spawn electron particles based on flow
+        // Spawn particles
         if (state.rectV > 1 && Math.random() > 0.8) {
-            state.particles.push({x: 100, y: 200, targetIdx: 0});
+            if (state.isFull) {
+                // When full, particles go from buck-boost to IC
+                state.icParticles.push({x: 400, y: 280, targetY: 140});
+            } else {
+                // Normal flow to USB
+                state.particles.push({x: 100, y: 300, targetIdx: 0});
+            }
+        }
+        
+        // Spawn signal waves when IC is transmitting
+        if (state.isTransmitting && Math.random() > 0.7) {
+            state.signalWaves.push({
+                x: transmitter.x,
+                y: transmitter.y,
+                radius: 0,
+                opacity: 1
+            });
+        }
+    }
+
+    function updateStatus() {
+        if (state.isFull && state.isTransmitting) {
+            statusText.textContent = '📡 TRANSMITTING SIGNAL';
+            statusIndicator.classList.add('transmitting');
+            signalIcon.style.display = 'inline-block';
+            storageCard.classList.add('full');
+        } else if (state.isRunning) {
+            statusText.textContent = '🟢 CHARGING';
+            statusIndicator.classList.remove('transmitting');
+            signalIcon.style.display = 'none';
+            storageCard.classList.remove('full');
+        } else {
+            statusText.textContent = '⚫ IDLE';
+            statusIndicator.classList.remove('transmitting');
+            signalIcon.style.display = 'none';
+            storageCard.classList.remove('full');
         }
     }
 
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Draw Wires
-        ctx.strokeStyle = "#ccc";
+        // Draw main power wire (horizontal)
+        ctx.strokeStyle = state.isFull ? "#e74c3c" : (state.rectV > 1 ? "#4ecc71" : "#ccc");
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(100, 200); ctx.lineTo(700, 200);
+        ctx.moveTo(100, 300);
+        ctx.lineTo(600, 300);
         ctx.stroke();
+
+        // Draw vertical wire from buck-boost to IC (only when full)
+        if (state.isFull) {
+            ctx.strokeStyle = "#f39c12";
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(400, 280);
+            ctx.lineTo(400, 140);
+            ctx.stroke();
+            
+            // Draw arrow indicating upward flow
+            ctx.fillStyle = "#f39c12";
+            ctx.beginPath();
+            ctx.moveTo(400, 145);
+            ctx.lineTo(395, 155);
+            ctx.lineTo(405, 155);
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            // Draw dim connection line when not active
+            ctx.strokeStyle = "#ccc";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(400, 280);
+            ctx.lineTo(400, 140);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
 
         // Draw Components
         Object.keys(comps).forEach(key => {
             let c = comps[key];
-            ctx.fillStyle = c.color;
-            ctx.fillRect(c.x, c.y, 100, 80);
-            ctx.fillStyle = "#000";
+            
+            // Highlight IC when transmitting
+            if (key === 'ic' && state.isTransmitting) {
+                ctx.fillStyle = c.color;
+                ctx.shadowColor = c.color;
+                ctx.shadowBlur = 20;
+            } else if (key === 'ic') {
+                ctx.fillStyle = "#666";
+            } else {
+                ctx.fillStyle = c.color;
+            }
+            
+            ctx.fillRect(c.x, c.y, 100, 60);
+            ctx.shadowBlur = 0;
+            
+            ctx.fillStyle = "#fff";
             ctx.font = "bold 12px Arial";
-            ctx.fillText(c.name, c.x + 10, c.y + 45);
+            ctx.fillText(c.name, c.x + 10, c.y + 35);
+            
+            // Draw IC pins/legs
+            if (key === 'ic') {
+                ctx.fillStyle = state.isTransmitting ? "#f39c12" : "#666";
+                for (let i = 0; i < 4; i++) {
+                    ctx.fillRect(c.x + 20 + (i * 20), c.y + 60, 3, 10);
+                    ctx.fillRect(c.x + 20 + (i * 20), c.y - 10, 3, 10);
+                }
+            }
         });
 
-        // Draw Particles (Electrons)
-        ctx.fillStyle = "#f1c40f";
-        state.particles.forEach((p, i) => {
-            p.x += 5;
+        // Draw storage indicator
+        const storagePercent = (state.energyBuffer / state.maxBuffer);
+        ctx.fillStyle = state.isFull ? "#e74c3c" : "#4ecc71";
+        ctx.fillRect(350, 340, 100 * storagePercent, 10);
+        ctx.strokeStyle = "#333";
+        ctx.strokeRect(350, 340, 100, 10);
+        ctx.fillStyle = "#333";
+        ctx.font = "10px Arial";
+        ctx.fillText("Storage", 355, 335);
+
+        // Draw normal particles (to USB when not full)
+        if (!state.isFull) {
+            ctx.fillStyle = "#f1c40f";
+            state.particles.forEach((p, i) => {
+                p.x += 5;
+                ctx.beginPath();
+                ctx.arc(p.x, 300, 5, 0, Math.PI*2);
+                ctx.fill();
+                if (p.x > 600) state.particles.splice(i, 1);
+            });
+        } else {
+            state.particles = [];
+        }
+
+        // Draw IC particles (vertical flow when full)
+        ctx.fillStyle = "#f39c12";
+        state.icParticles.forEach((p, i) => {
+            p.y -= 4; // Move upward
             ctx.beginPath();
-            ctx.arc(p.x, 200, 5, 0, Math.PI*2);
+            ctx.arc(p.x, p.y, 5, 0, Math.PI*2);
             ctx.fill();
-            if (p.x > 700) state.particles.splice(i, 1);
+            
+            // Add glow effect
+            ctx.shadowColor = "#f39c12";
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            
+            if (p.y < p.targetY) state.icParticles.splice(i, 1);
         });
+
+        // Draw Transmitter Antenna on IC
+        ctx.strokeStyle = state.isTransmitting ? "#f39c12" : "#666";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(transmitter.x, 100);
+        ctx.lineTo(transmitter.x, transmitter.y);
+        ctx.stroke();
+        
+        // Antenna tip
+        ctx.fillStyle = state.isTransmitting ? "#f39c12" : "#666";
+        ctx.beginPath();
+        ctx.arc(transmitter.x, transmitter.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Antenna base (larger circle)
+        ctx.beginPath();
+        ctx.arc(transmitter.x, transmitter.y + 5, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw Signal Waves from IC antenna
+        if (state.isTransmitting) {
+            state.signalWaves.forEach((wave, i) => {
+                wave.radius += 3;
+                wave.opacity -= 0.02;
+                
+                if (wave.opacity <= 0) {
+                    state.signalWaves.splice(i, 1);
+                } else {
+                    ctx.strokeStyle = `rgba(243, 156, 18, ${wave.opacity})`;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(wave.x, wave.y, wave.radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    // Second wave for effect
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(wave.x, wave.y, wave.radius + 5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            });
+            
+            // Draw status text
+            ctx.fillStyle = "#e74c3c";
+            ctx.font = "bold 18px Arial";
+            ctx.fillText("STORAGE FULL - TRANSMITTING", 180, 30);
+            
+            // Draw current path indicator
+            ctx.fillStyle = "#f39c12";
+            ctx.font = "12px Arial";
+            ctx.fillText("Current → TX IC", 320, 220);
+        }
+
+        // Draw labels
+        ctx.fillStyle = "#333";
+        ctx.font = "11px Arial";
+        if (!state.isFull) {
+            ctx.fillText("Power Flow →", 100, 320);
+        } else {
+            ctx.fillText("Power redirected ↑", 300, 320);
+        }
     }
 
     function animate() {
@@ -184,9 +459,25 @@
         state.rpm = e.target.value;
         rpmDisp.innerText = state.rpm;
     };
-    document.getElementById('start-btn').onclick = () => state.isRunning = true;
-    document.getElementById('stop-btn').onclick = () => state.isRunning = false;
+    
+    document.getElementById('start-btn').onclick = () => {
+        state.isRunning = true;
+    };
+    
+    document.getElementById('stop-btn').onclick = () => {
+        state.isRunning = false;
+    };
+    
+    document.getElementById('reset-btn').onclick = () => {
+        state.energyBuffer = 0;
+        state.isFull = false;
+        state.isTransmitting = false;
+        state.signalWaves = [];
+        state.icParticles = [];
+        updateStatus();
+    };
 
     init();
 </script>
 </body>
+</html>
